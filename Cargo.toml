@@ -1,0 +1,10 @@
+[package]
+edition = "2021"
+name = "web-api"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rocket = "0.4.6"
+rusqlite = {version = "0.26.3", features = ["bundled"]}
