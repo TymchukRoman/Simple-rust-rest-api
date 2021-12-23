@@ -1,7 +1,6 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
-#[macro_use]
-extern crate rocket;
+use rocket::*;
 use rocket_contrib::json::Json;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -10,11 +9,13 @@ use serde::Serialize;
 struct ToDoList {
     items: Vec<ToDoItem>,
 }
+
 #[derive(Serialize)]
 struct ToDoItem {
     id: i64,
     item: String,
 }
+
 #[derive(Serialize)]
 struct StatusMessage {
     message: String,
@@ -22,24 +23,24 @@ struct StatusMessage {
 
 #[get("/")]
 fn index() -> &'static str {
-    "Hello world"
+    "Hello, world!"
 }
 
 #[get("/todo")]
-fn fetch_todos() -> Result<Json<ToDoList>, String> {
-    let db = match rusqlite::Connection::open("data.sqlite") {
+fn fetch_all_todo_items() -> Result<Json<ToDoList>, String> {
+    let db_connection = match Connection::open("data.sqlite") {
         Ok(connection) => connection,
         Err(_) => {
-            return Err(String::from("Failed to connect db..."));
+            return Err(String::from("Failed to connect to database"));
         }
     };
 
-    let mut statement = match db.prepare("select id, item from todo_list") {
+    let mut statement = match db_connection.prepare("select id, item from todo_list;") {
         Ok(statement) => statement,
-        Err(_) => return Err("Failed to prepare statement".into()),
+        Err(_) => return Err("Failed to prepare query".into()),
     };
 
-    let results = statement.query_map([], |row| {
+    let results = statement.query_map(rusqlite::NO_PARAMS, |row| {
         Ok(ToDoItem {
             id: row.get(0)?,
             item: row.get(1)?,
@@ -49,14 +50,13 @@ fn fetch_todos() -> Result<Json<ToDoList>, String> {
     match results {
         Ok(rows) => {
             let collection: rusqlite::Result<Vec<_>> = rows.collect();
+
             match collection {
                 Ok(items) => Ok(Json(ToDoList { items })),
-                Err(_) => {
-                    return Err(String::from("Could not collect items"));
-                }
+                Err(_) => Err("Could not collect items".into()),
             }
         }
-        Err(_) => Err("Failed to fetch".into()),
+        Err(_) => Err("Failed to fetch todo items".into()),
     }
 }
 
@@ -84,17 +84,48 @@ fn add_todo_item(item: Json<String>) -> Result<Json<StatusMessage>, String> {
     }
 }
 
+#[delete("/todo/<id>")]
+fn remove_todo_item(id: i64) -> Result<Json<StatusMessage>, String> {
+    let db_connection = match Connection::open("data.sqlite") {
+        Ok(connection) => connection,
+        Err(_) => {
+            return Err(String::from("Failed to connect to database"));
+        }
+    };
+
+    let mut statement = match db_connection.prepare("delete from todo_list where id = $1;") {
+        Ok(statement) => statement,
+        Err(_) => return Err("Failed to prepare query".into()),
+    };
+    let results = statement.execute(&[&id]);
+
+    match results {
+        Ok(rows_affected) => Ok(Json(StatusMessage {
+            message: format!("{} rows deleted!", rows_affected),
+        })),
+        Err(_) => Err("Failed to delete todo item".into()),
+    }
+}
+
 fn main() {
     {
-        let db = rusqlite::Connection::open("data.sqlite").unwrap();
-        db.execute(
-            "create table if not exists todo_list (id integer primary key, item varchar(64) not null);",
-            [],
-        )
-        .unwrap();
+        let db_connection = Connection::open("data.sqlite").unwrap();
+
+        db_connection
+            .execute(
+                "create table if not exists todo_list (
+                    id integer primary key,
+                    item varchar(64) not null
+                );",
+                rusqlite::NO_PARAMS,
+            )
+            .unwrap();
     }
 
     rocket::ignite()
-        .mount("/", routes![index, fetch_todos, add_todo_item])
+        .mount(
+            "/",
+            routes![index, fetch_all_todo_items, add_todo_item, remove_todo_item],
+        )
         .launch();
 }
